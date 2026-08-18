@@ -9,6 +9,8 @@ env:
   CCACHE_KEY: ccache-ecsv4-gki-6.12.23
 
 on:
+  schedule:
+    - cron: '0 */4 * * *' # 每天每 4 小时自动触发一次 (UTC 时间 0:00, 4:00, 8:00, 12:00, 16:00, 20:00)
   workflow_dispatch:
     inputs:
       ksu_type:
