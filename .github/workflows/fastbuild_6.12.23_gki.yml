@@ -96,7 +96,7 @@ on:
         description: '内核后缀(留空默认,开头别加连字符,勿加空格等影响指令运行的保留字符)'
         required: false
         type: string
-        default: 'android16-5-g188c695beb6d-ab14367805-4k'
+        default: 'android16-5-gb2a876903b49-ab14541642-4k'
 
 jobs:
   build:
