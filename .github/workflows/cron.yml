@@ -2,7 +2,7 @@ name: 自动定时触发器
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # 每 4 小时触发一次
+    - cron: '0 */2 * * *'  # 每 2 小时触发一次
   workflow_dispatch:       # 保留手动触发按钮
 
 jobs:
