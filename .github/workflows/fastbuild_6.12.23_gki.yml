@@ -250,16 +250,25 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "xeckernelpro" ]]; then
             echo "正在配置 XECKernelPro..."
-            # 优先尝试执行仓库自带的 setup.sh，若不存在则直接 clone 到内核目录建立软链接
-            if curl -fLSs "https://raw.githubusercontent.com/byBOOK10086/XECKernelPro/main/kernel/setup.sh" > xec_setup.sh 2>/dev/null && [ -s xec_setup.sh ]; then
-              bash xec_setup.sh main
-              rm -f xec_setup.sh
+            git clone --depth=1 https://github.com/byBOOK10086/XECKernelPro.git KernelSU
+            
+            # 1. 软链接驱动目录
+            if [ -d "KernelSU/kernel" ]; then
+              ln -s "$(pwd)/KernelSU/kernel" "$(pwd)/common/drivers/kernelsu"
             else
-              git clone --depth=1 https://github.com/byBOOK10086/XECKernelPro.git KernelSU
-              ln -s "$(pwd)/KernelSU/kernel" "$(pwd)/common/drivers/kernelsu" 2>/dev/null || ln -s "$(pwd)/KernelSU" "$(pwd)/common/drivers/kernelsu"
-              sed -i '/drivers\/Makefile/d' ./common/drivers/Makefile 2>/dev/null || true
-              echo 'obj-y += kernelsu/' >> ./common/drivers/Makefile
+              ln -s "$(pwd)/KernelSU" "$(pwd)/common/drivers/kernelsu"
             fi
+            
+            # 2. 注入 drivers/Makefile
+            sed -i '/drivers\/Makefile/d' ./common/drivers/Makefile 2>/dev/null || true
+            grep -q "kernelsu" ./common/drivers/Makefile || echo 'obj-y += kernelsu/' >> ./common/drivers/Makefile
+            
+            # 3. 关键修复：给 Kbuild 补全所有子目录的头文件包含路径
+            TARGET_KBUILD="$(pwd)/common/drivers/kernelsu/Kbuild"
+            if [ -f "$TARGET_KBUILD" ]; then
+              sed -i '1i ccflags-y += -I$(srctree)/drivers/kernelsu -I$(srctree)/drivers/kernelsu/include -I$(srctree)/drivers/kernelsu/core -I$(srctree)/drivers/kernelsu/feature -I$(srctree)/drivers/kernelsu/policy' "$TARGET_KBUILD"
+            fi
+
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
             KSU_VERSION=$(expr $(git rev-list --count HEAD 2>/dev/null || echo 0) + 30000 2>/dev/null || echo 114514)
