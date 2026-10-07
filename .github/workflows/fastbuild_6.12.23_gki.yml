@@ -250,38 +250,56 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "xeckernelpro" ]]; then
             echo "正在配置 XECKernelPro..."
-            git clone --depth=1 https://github.com/byBOOK10086/XECKernelPro.git KernelSU
+            # 完整克隆以保证能够正确统计提交数和版本号
+            git clone https://github.com/byBOOK10086/XECKernelPro.git KernelSU
             
-            # 1. 软链接驱动目录
+            # 软链接驱动目录至内核树
             if [ -d "KernelSU/kernel" ]; then
               ln -s "$(pwd)/KernelSU/kernel" "$(pwd)/common/drivers/kernelsu"
             else
               ln -s "$(pwd)/KernelSU" "$(pwd)/common/drivers/kernelsu"
             fi
             
-            # 2. 注入 drivers/Makefile
-            sed -i '/drivers\/Makefile/d' ./common/drivers/Makefile 2>/dev/null || true
-            grep -q "kernelsu" ./common/drivers/Makefile || echo 'obj-y += kernelsu/' >> ./common/drivers/Makefile
+            # 注入 Makefile
+            sed -i '/kernelsu/d' ./common/drivers/Makefile 2>/dev/null || true
+            echo 'obj-y += kernelsu/' >> ./common/drivers/Makefile
             
-            # 3. 关键修复：给 Kbuild 补全所有子目录的头文件包含路径
+            # 修复头文件缺失问题：显式补全子目录 include 路径
             TARGET_KBUILD="$(pwd)/common/drivers/kernelsu/Kbuild"
             if [ -f "$TARGET_KBUILD" ]; then
               sed -i '1i ccflags-y += -I$(srctree)/drivers/kernelsu -I$(srctree)/drivers/kernelsu/include -I$(srctree)/drivers/kernelsu/core -I$(srctree)/drivers/kernelsu/feature -I$(srctree)/drivers/kernelsu/policy' "$TARGET_KBUILD"
             fi
-
+            
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
+            
+            # 准确提取提交历史数量，若失败则调用 API 兜底
             cd ./KernelSU
-            KSU_VERSION=$(expr $(git rev-list --count HEAD 2>/dev/null || echo 0) + 30000 2>/dev/null || echo 114514)
+            COMMIT_COUNT=$(git rev-list --count HEAD 2>/dev/null || true)
+            if [ -z "$COMMIT_COUNT" ] || [ "$COMMIT_COUNT" -le 1 ]; then
+              COMMIT_COUNT=$(curl -sI "https://api.github.com/repos/byBOOK10086/XECKernelPro/commits?per_page=1" | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p')
+            fi
+            [ -z "$COMMIT_COUNT" ] && COMMIT_COUNT=100
+            KSU_VERSION=$((COMMIT_COUNT + 30000))
+            
+            # 强制覆盖 Kbuild 内部的版本 Fallback
+            if [ -f "$TARGET_KBUILD" ]; then
+              sed -i "s/DKSU_VERSION=.*/DKSU_VERSION=${KSU_VERSION}/g" "$TARGET_KBUILD" 2>/dev/null || true
+              sed -i "s/KSU_VERSION_FALLBACK := .*/KSU_VERSION_FALLBACK := ${KSU_VERSION}/g" "$TARGET_KBUILD" 2>/dev/null || true
+            fi
+            
+            echo "计算得到的真实版本号: $KSU_VERSION"
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
+
           elif [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "resukisu" ]]; then
             echo "正在配置ReSukiSU..."
             curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
-            KSU_VERSION=$(expr $(git rev-list --count main) + 30700 2>/dev/null || echo 114514)
+            KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || git rev-list --count HEAD 2>/dev/null) + 30700 2>/dev/null || echo 114514)
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
+
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
             echo "正在配置KernelSU Next..."
             curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
@@ -296,6 +314,7 @@ jobs:
             cd ../common/drivers/kernelsu
             wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/apk_sign.patch
             patch -p2 -N -F 3 < apk_sign.patch || true
+
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksu" ]]; then
             echo "正在配置原版 KernelSU (tiann/KernelSU)..."
             curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/refs/heads/main/kernel/setup.sh" | bash -s main
@@ -330,7 +349,7 @@ jobs:
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
           fi
-          
+
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
         run: |
@@ -350,7 +369,7 @@ jobs:
           cd kernel_workspace/common
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/lz4kd.patch
           patch -p1 -F 3 < lz4kd.patch || true
-          
+
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
@@ -370,7 +389,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
-          
+
       - name: 添加 KSU & 其他配置项
         run: |
           cd kernel_workspace
@@ -399,7 +418,7 @@ jobs:
           cd common
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/cve-2026-43499-rtmutex-6.12.patch
           patch -p1 -F 3 < cve-2026-43499-rtmutex-6.12.patch
-          
+
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
         run: |
@@ -622,7 +641,13 @@ jobs:
           sudo rm -rf /usr/local/lib/android &
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
+          
+          # 生成基础配置
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="clang" LD="ld.lld" OBJCOPY="llvm-objcopy" O=out gki_defconfig &&
+          
+          # 核心修复点：强制删除内核版本相关的旧目标文件与头文件，防止 ccache 污染导致版本号对不上
+          rm -f ./out/init/version.o ./out/include/generated/utsrelease.h ./out/include/generated/compile.h
+          
           export CC="$(pwd)/cc-wrapper" && export LD="$(pwd)/ld-wrapper" &&
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" OBJCOPY="llvm-objcopy" O=out Image
           
